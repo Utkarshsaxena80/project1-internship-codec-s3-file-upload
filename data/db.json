@@ -1,0 +1,62 @@
+{
+  "users": [
+    {
+      "id": "google_o7uo3hr9t",
+      "email": "google-6z8e@example.com",
+      "passwordHash": "OAUTH_MOCK_PASSWORD",
+      "name": "Google Explorer 6z8e",
+      "createdAt": "2026-07-11T06:14:59.448Z"
+    },
+    {
+      "id": "8cfoz417514",
+      "email": "utkarshsaxena851@gmail.com",
+      "passwordHash": "$2b$10$XdlYZl4zY9CNCBWyTgSmMekZ0AuBiVwMy8pvjQznz3JEItMdM6gq.",
+      "name": "UTKARSH SAXENA",
+      "createdAt": "2026-07-16T06:14:18.557Z"
+    }
+  ],
+  "folders": [],
+  "files": [
+    {
+      "id": "file_d1nbnlp2i",
+      "name": "clg_id.pdf",
+      "size": 82582,
+      "type": "application/pdf",
+      "folderId": null,
+      "ownerId": "google_o7uo3hr9t",
+      "createdAt": "2026-07-16T06:13:38.727Z",
+      "isDeleted": false
+    },
+    {
+      "id": "file_3zjyt4cjm",
+      "name": "clg_id.pdf",
+      "size": 82582,
+      "type": "application/pdf",
+      "folderId": null,
+      "ownerId": "8cfoz417514",
+      "createdAt": "2026-07-16T06:14:28.962Z",
+      "isDeleted": false
+    }
+  ],
+  "fileVersions": [
+    {
+      "id": "ver_fnggj4t1a",
+      "fileId": "file_d1nbnlp2i",
+      "s3Key": "uploads_google_o7uo3hr9t_file_d1nbnlp2i_ver_fnggj4t1a_clg_id.pdf",
+      "size": 82582,
+      "versionNumber": 1,
+      "uploadedBy": "google_o7uo3hr9t",
+      "uploadedAt": "2026-07-16T06:13:38.727Z"
+    },
+    {
+      "id": "ver_lxjp91noh",
+      "fileId": "file_3zjyt4cjm",
+      "s3Key": "uploads_8cfoz417514_file_3zjyt4cjm_ver_lxjp91noh_clg_id.pdf",
+      "size": 82582,
+      "versionNumber": 1,
+      "uploadedBy": "8cfoz417514",
+      "uploadedAt": "2026-07-16T06:14:28.962Z"
+    }
+  ],
+  "shares": []
+}

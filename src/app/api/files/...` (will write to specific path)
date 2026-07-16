@@ -1,0 +1,205 @@
+import { NextResponse } from 'next/server';
+import { getAuthUser } from '@/lib/auth';
+import { readDb, writeDb } from '@/lib/jsonDb';
+import { getFileBuffer, deleteFile } from '@/lib/storage';
+
+// Helper to recursively check if a parent folder is shared with a user email
+function isAncestorFolderShared(
+  folderId: string | null,
+  email: string,
+  db: any
+): boolean {
+  if (!folderId) return false;
+
+  const shared = db.shares.find(
+    (s: any) =>
+      s.targetId === folderId &&
+      s.targetType === 'folder' &&
+      s.sharedWithEmail?.toLowerCase() === email.toLowerCase()
+  );
+  if (shared) return true;
+
+  const folder = db.folders.find((f: any) => f.id === folderId);
+  if (folder && folder.parentId) {
+    return isAncestorFolderShared(folder.parentId, email, db);
+  }
+
+  return false;
+}
+
+// Helper to check if file has a public share active
+function isFilePubliclyShared(fileId: string, db: any): boolean {
+  // Check file share
+  const fileShare = db.shares.find(
+    (s: any) => s.targetId === fileId && s.targetType === 'file' && s.isPublic
+  );
+  if (fileShare) return true;
+
+  // Check parent folder shares
+  const file = db.files.find((f: any) => f.id === fileId);
+  if (file && file.folderId) {
+    let currentFolderId: string | null = file.folderId;
+    while (currentFolderId) {
+      const folderShare = db.shares.find(
+        (s: any) =>
+          s.targetId === currentFolderId &&
+          s.targetType === 'folder' &&
+          s.isPublic
+      );
+      if (folderShare) return true;
+
+      const folder = db.folders.find((f: any) => f.id === currentFolderId);
+      currentFolderId = folder ? folder.parentId : null;
+    }
+  }
+
+  return false;
+}
+
+export async function GET(
+  req: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const fileId = (await params).id;
+    const { searchParams } = new URL(req.url);
+    const versionId = searchParams.get('versionId'); // Optional: download specific version
+    const token = searchParams.get('token'); // Optional: public token for sharing
+
+    const user = await getAuthUser();
+    const db = readDb();
+
+    const file = db.files.find((f) => f.id === fileId && !f.isDeleted);
+    if (!file) {
+      return NextResponse.json({ error: 'File not found' }, { status: 404 });
+    }
+
+    let hasPermission = false;
+
+    // 1. Check if user is the owner
+    if (user && file.ownerId === user.id) {
+      hasPermission = true;
+    }
+
+    // 2. Check if file is shared with user email
+    if (!hasPermission && user) {
+      const fileShared = db.shares.find(
+        (s) =>
+          s.targetId === fileId &&
+          s.targetType === 'file' &&
+          s.sharedWithEmail?.toLowerCase() === user.email.toLowerCase()
+      );
+      if (fileShared) {
+        hasPermission = true;
+      }
+    }
+
+    // 3. Check if parent folder is shared with user email
+    if (!hasPermission && user && file.folderId) {
+      if (isAncestorFolderShared(file.folderId, user.email, db)) {
+        hasPermission = true;
+      }
+    }
+
+    // 4. Check if file (or parent folder) is publicly shared
+    if (!hasPermission) {
+      if (isFilePubliclyShared(fileId, db)) {
+        // If a specific public token is passed, we can validate it, or just allow if public flag is true
+        if (token) {
+          const share = db.shares.find((s) => s.publicToken === token);
+          if (share) hasPermission = true;
+        } else {
+          // Allow downloading directly if verified public
+          hasPermission = true;
+        }
+      }
+    }
+
+    if (!hasPermission) {
+      return NextResponse.json({ error: 'Unauthorized file access' }, { status: 403 });
+    }
+
+    // Get the specified version or active version
+    const versions = db.fileVersions.filter((v) => v.fileId === fileId);
+    if (versions.length === 0) {
+      return NextResponse.json({ error: 'No file versions found' }, { status: 404 });
+    }
+
+    let selectedVersion = versions[versions.length - 1]; // default: latest version
+    if (versionId) {
+      const matched = versions.find((v) => v.id === versionId);
+      if (matched) selectedVersion = matched;
+    }
+
+    // Get file buffer
+    const buffer = await getFileBuffer(selectedVersion.s3Key);
+
+    // Set proper headers. Allow images, PDFs, etc. to render inline in browser.
+    const isInline = /^(image\/|video\/|audio\/|application\/pdf)/.test(file.type);
+    const contentDisposition = isInline
+      ? `inline; filename="${encodeURIComponent(file.name)}"`
+      : `attachment; filename="${encodeURIComponent(file.name)}"`;
+
+    return new NextResponse(buffer, {
+      headers: {
+        'Content-Type': file.type,
+        'Content-Length': selectedVersion.size.toString(),
+        'Content-Disposition': contentDisposition,
+      },
+    });
+  } catch (error: any) {
+    console.error('File download error:', error);
+    return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
+  }
+}
+
+export async function DELETE(
+  req: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const fileId = (await params).id;
+    const user = await getAuthUser();
+    if (!user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const db = readDb();
+    const fileIdx = db.files.findIndex((f) => f.id === fileId && f.ownerId === user.id);
+
+    if (fileIdx === -1) {
+      return NextResponse.json({ error: 'File not found or permission denied' }, { status: 404 });
+    }
+
+    const file = db.files[fileIdx];
+
+    // Get all versions of this file
+    const versions = db.fileVersions.filter((v) => v.fileId === fileId);
+
+    // Delete files from storage
+    for (const ver of versions) {
+      try {
+        await deleteFile(ver.s3Key);
+      } catch (err) {
+        console.error(`Failed to delete storage file ${ver.s3Key}:`, err);
+      }
+    }
+
+    // Delete versions metadata
+    db.fileVersions = db.fileVersions.filter((v) => v.fileId !== fileId);
+
+    // Delete shares
+    db.shares = db.shares.filter((s) => s.targetId !== fileId);
+
+    // Remove file entry
+    db.files.splice(fileIdx, 1);
+
+    writeDb(db);
+
+    return NextResponse.json({ success: true });
+  } catch (error: any) {
+    console.error('File deletion error:', error);
+    return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
+  }
+}
+export const dynamic = 'force-dynamic';
